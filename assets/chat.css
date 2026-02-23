@@ -1,9 +1,11 @@
+/* FRONT END CSS */
 #wcq-popup { position: fixed; inset: 0; z-index: 9999; }
 .wcq-overlay { position: absolute; inset: 0; background: rgba(0, 0, 0, .6); cursor: pointer; }
 .wcq-box { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #fff; z-index: 9999; width: 800px; max-width: 95%; border-radius: 10px; height: 100%; max-height: 80vh; display: flex; flex-direction: column; justify-content: space-between; }
 .wcq-header { padding: 20px;}
 .wcq-messages { overflow-y: scroll; padding: 20px; height: 100%; background: #54a3ab; }
 .bot { background: #eef; padding: 10px; border-radius: 10px; margin-bottom: 10px; width: 65%; float: left; }
+.bot ul { margin: 10px 0; padding-left: 15px; }
 .user { background: #d1f7d1; padding: 10px; border-radius: 10px; text-align: right; margin-bottom: 10px; width: 65%; float: right; }
 .wcq-box label { display: block; margin: 5px 0; }
 .wcq-box select, .wcq-box input[type="text"] { width: 100%; padding: 8px; margin-top: 10px; }
