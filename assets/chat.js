@@ -1,5 +1,4 @@
 jQuery(function ($) {
-  
   // ONLY intercept if product HAS form
   if (!WCChat.has_form) {
     return; // WooCommerce works normally
@@ -11,42 +10,115 @@ jQuery(function ($) {
 
   // Open popup when Add to Cart clicked
   $(document).on('click', '.single_add_to_cart_button', function (e) {
+    if (typeof WCChat === 'undefined') return; 
+
     e.preventDefault();
+    var $btn = $(this);
+    var originalText = $btn.text();
+
+    // Clear any existing notices first
+    $('.woocommerce-error, .woocommerce-message, .woocommerce-info').remove();
+
+    $btn.text('Checking...').prop('disabled', true);
 
     $.post(WCChat.ajaxurl, {
-      action: 'get_wcq_questions',
-      product_id: WCChat.product_id,
-      nonce: WCChat.nonce
-    }, function (res) {
+        action: 'wcq_check_cooldown',
+        product_id: WCChat.product_id
+    }, function (checkRes) {
 
-      if (!res || res.length === 0) {
-        // safety fallback — should never happen
-        window.location.href = WCChat.cart_url + '?add-to-cart=' + WCChat.product_id;
-        return;
-      }
+        if (checkRes.allowed === false) {
+            // 1. Define the notice HTML
+            var noticeHtml = 
+                '<div class="woocommerce-notices-wrapper">' +
+                    '<div class="woocommerce-error" role="alert" style="margin-top: 20px;">' +
+                        checkRes.message +
+                    '</div>' +
+                '</div>';
 
-      questions = res;
-      answers = [];
-      current = 0;
+            // 2. Inject at the top of the page
+            // We target the breadcrumb or the main site container to get it to the very top
+            if ($('.woocommerce-notices-wrapper').length) {
+                $('.woocommerce-notices-wrapper').after(noticeHtml);
+            } else if ($('#content').length) {
+                $('#content').prepend(noticeHtml);
+            } else {
+                $('body.single-product').find('.site-content, #main').prepend(noticeHtml);
+            }
 
-      $('#wcq-progress-bar').css('width', '0%');
-      $('#wcq-popup').fadeIn();
-      $('.wcq-messages').html('');
+            // 3. Smooth scroll to the top so the user sees it
+            $('html, body').animate({
+                scrollTop: 0
+            }, 600);
 
-      showQuestion();
+            // 4. Reset button state
+            $btn.text(originalText).prop('disabled', false);
+            return; 
+        }
+
+        // Proceed to questions if allowed
+        $.post(WCChat.ajaxurl, {
+            action: 'get_wcq_questions',
+            product_id: WCChat.product_id,
+            nonce: WCChat.nonce
+        }, function (res) {
+            
+            $btn.text(originalText).prop('disabled', false);
+
+            if (!res || res.length === 0) {
+                window.location.href = window.location.pathname + '?add-to-cart=' + WCChat.product_id;
+                return;
+            }
+
+            questions = res;
+            answers = [];
+            current = 0;
+            $('#wcq-progress-bar').css('width', '0%');
+            $('#wcq-popup').fadeIn();
+            $('.wcq-messages').html('');
+            showQuestion();
+        });
     });
   });
 
+  /* --- INSERT THIS NEW BLOCK --- */
+  $(document).on('change', 'input[type="radio"], .wcq-select', function() {
+    let nameAttr = $(this).attr('name');
+    if (!nameAttr) return;
+    
+    // Get the index from the name (e.g., wcq_radio_2 becomes 2)
+    let changedIndex = parseInt(nameAttr.replace('wcq_radio_', ''));
+    
+    // If the user is changing an answer to an OLD question
+    if (changedIndex < current) {
+      // 1. Remove all data in the array from this point forward
+      answers = answers.slice(0, changedIndex);
+      
+      // 2. Move the logic pointer back to this question
+      current = changedIndex;
+      
+      // 3. Remove all chat bubbles that appear AFTER this question
+      $(this).closest('.bot').nextAll().remove();
+      
+      // The user will now have to click "Proceed" again to trigger the NEW logic path
+    }
+  });
+  /* ----------------------------- */
+
   function showQuestion() {
-    // Safely skip conditional questions
+    $('#wcq-error-msg').hide();
+
     while (questions[current] && questions[current].condition) {
       let cond = questions[current].condition;
       let prevAnswer = answers[cond.question_index]?.answer || '';
-
-      if (prevAnswer !== cond.equals) {
-        current++;
+      
+      // Split the expected answers into an array: ["yes (soft lenses)", "yes (hard lenses)"]
+      let expectedAnswers = cond.equals.split(',').map(s => s.trim().toLowerCase());
+      
+      // Check if the user's previous answer is included in that array
+      if (!expectedAnswers.includes(prevAnswer.toLowerCase())) {
+          current++; // Skip this question if the answer doesn't match any in the list
       } else {
-        break;
+          break; // Match found, show this question
       }
     }
 
@@ -66,73 +138,111 @@ jQuery(function ($) {
     if (questionType === 'TEXT') {
       html += `<input type="text" class="wcq-input">`;
     }
-
     if (questionType === 'RADIO') {
       options.forEach(opt => {
-        html += `<label><input type="radio" name="wcq_radio" value="${opt}"> ${opt}</label>`;
+        // Change name="wcq_radio" to name="wcq_radio_${current}"
+        html += `<label><input type="radio" name="wcq_radio_${current}" value="${opt}"> ${opt}</label>`;
       });
     }
-
     if (questionType === 'CHECKBOX') {
       options.forEach(opt => {
         html += `<label><input type="checkbox" value="${opt}"> ${opt}</label>`;
       });
     }
-
     if (questionType === 'SELECT') {
       html += `<select class="wcq-select"><option value="">Select</option>`;
-      options.forEach(opt => {
-        html += `<option value="${opt}">${opt}</option>`;
-      });
+      options.forEach(opt => { html += `<option value="${opt}">${opt}</option>`; });
       html += `</select>`;
     }
-
     html += `</div>`;
 
     $('.wcq-messages').append(html);
     updateProgress();
+    $('.wcq-messages').animate({ scrollTop: $('.wcq-messages')[0].scrollHeight }, 500);
   }
 
   $('#wcq-next').on('click', function () {
-
     let q = questions[current];
     let questionType = q.type || 'TEXT';
-    let questionText = q.question;
     let answer = '';
+    let $currentBot = $('.bot').last();
 
-    if (questionType === 'TEXT') {
-      answer = $('.wcq-input').last().val();
+    $('#wcq-error-msg').hide().text('');
+
+    if (questionType === 'TEXT')     answer = $currentBot.find('.wcq-input').val();
+    if (questionType === 'RADIO')    answer = $currentBot.find(`input[name="wcq_radio_${current}"]:checked`).val();
+    if (questionType === 'SELECT') {
+      answer = $currentBot.find('.wcq-select').val();
     }
-
-    if (questionType === 'RADIO') {
-      answer = $('input[name="wcq_radio"]:checked').val();
-    }
-
     if (questionType === 'CHECKBOX') {
       let vals = [];
-      $('.bot:last input[type=checkbox]:checked').each(function () {
-        vals.push($(this).val());
-      });
+      $currentBot.find('input[type=checkbox]:checked').each(function () { vals.push($(this).val()); });
       answer = vals.join(', ');
     }
 
-    if (questionType === 'SELECT') {
-      answer = $('.wcq-select').last().val();
-    }
-
-    if (!answer) {
-      alert('Please answer the question');
+    if (!answer || answer.trim() === "") {
+      $('#wcq-error-msg').text("Please answer the question before continuing.").show();
       return;
     }
 
-    let safeAnswer = formatAnswer(answer);
-    $('.wcq-messages').append(`<div class="user">${safeAnswer}</div>`);
+    // 1. Check for empty answer (Validation)
+    if (!answer || (Array.isArray(answer) && answer.length === 0)) {
+      $('#wcq-error-msg').text("Please answer the question before continuing.").show();
+      return;
+    }
+
+    // This handles "Option A" as ["option a"] and "A, B" as ["a", "b"]
+    let userChoices = answer.split(',').map(s => s.trim().toLowerCase());
+
+    // 2. RULE: Patient Alert (Hard Stop)
+    if (q.patient_alert_val) {
+        let stopValues = q.patient_alert_val.split(',').map(s => s.trim().toLowerCase());
+
+        // Check if ANY of the user's choices are in the stop list
+        let hitStop = userChoices.some(choice => stopValues.includes(choice));
+
+        if (hitStop) {
+            $('#wcq-error-msg').text(q.patient_alert_msg || "You cannot proceed based on your selection.").show();
+            $('.wcq-messages').animate({ scrollTop: $('.wcq-messages')[0].scrollHeight }, 300);
+            return;
+        }
+    }
+
+    // 3. RULE: Can Proceed (Strict Validation)
+    if (q.can_proceed) {
+        let proceedValues = q.can_proceed.split(',').map(s => s.trim().toLowerCase());
+    
+        // For Select/Radio: Does the single choice match one of the allowed proceed values?
+        // For Checkbox: Did they select the required box(es)?
+        let canProceed = proceedValues.some(val => userChoices.includes(val));
+    
+        if (!canProceed) {
+            $('#wcq-error-msg').text("To continue, you must select: " + q.can_proceed).show();
+            $('.wcq-messages').animate({ scrollTop: $('.wcq-messages')[0].scrollHeight }, 300);
+            return;
+        }
+    }
+
+    // Handle the 'Admin Alert' (Orange Flag) and move to next question...
+    let isFlagged = false;
+    if (q.admin_alert_val) {
+      let flagList = q.admin_alert_val.split(',').map(item => item.trim().toLowerCase());
+      if (flagList.includes(answer.toLowerCase()) || q.admin_alert_val.toLowerCase() === 'any') {
+        isFlagged = true;
+      }
+    }
+
+    if (answers[current]) {
+      answers.splice(current); 
+    }
 
     answers.push({
-      question: questionText,
-      answer: safeAnswer
+      question: q.question,
+      answer: answer,
+      flagged: isFlagged
     });
 
+    $('.wcq-messages').append(`<div class="user">${answer}</div>`);
     current++;
 
     if (current < questions.length) {
@@ -182,7 +292,9 @@ jQuery(function ($) {
   }
 
   // Close popup when clicking overlay
-  $(document).on('click', '.wcq-overlay', function () {
-    $('#wcq-popup').fadeOut();
+  $(document).on('click', '#wcq-close', function () {
+    if (confirm("Are you sure you want to stop? Your progress will not be saved.")) {
+        $('#wcq-popup').fadeOut();
+    }
   });
 });
