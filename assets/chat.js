@@ -106,19 +106,35 @@ jQuery(function ($) {
 
   function showQuestion() {
     $('#wcq-error-msg').hide();
-
+    // console.log("Current Question Object:", questions[current]);
+    // console.log("Current Index:", current);
     while (questions[current] && questions[current].condition) {
       let cond = questions[current].condition;
+      // console.log("Condition Object:", cond);
+      // console.log("Condition.question_index:", cond.question_index);
+      // console.log("Condition.equals:", cond.equals);
       let prevAnswer = answers[cond.question_index]?.answer || '';
+      // console.log("Previous Answer:", prevAnswer);
       
       // Split the expected answers into an array: ["yes (soft lenses)", "yes (hard lenses)"]
       let expectedAnswers = cond.equals.split(',').map(s => s.trim().toLowerCase());
+      // console.log("Expected Answers Array:", expectedAnswers);
       
       // Check if the user's previous answer is included in that array
-      if (!expectedAnswers.includes(prevAnswer.toLowerCase())) {
+      /*if (!expectedAnswers.includes(prevAnswer.toLowerCase())) {
           current++; // Skip this question if the answer doesn't match any in the list
       } else {
           break; // Match found, show this question
+      }*/
+     // Check match
+      let match = expectedAnswers.includes(prevAnswer.toLowerCase());
+      // console.log("Match? ", match);
+      if (!match) {
+        // console.log("Skipping question:", current, "because no match.");
+        current++;
+      } else {
+        // console.log("Condition matched → stop at question index:", current);
+        break;
       }
     }
 
@@ -225,10 +241,19 @@ jQuery(function ($) {
 
     // Handle the 'Admin Alert' (Orange Flag) and move to next question...
     let isFlagged = false;
+    let isSafe = false;
+
     if (q.admin_alert_val) {
       let flagList = q.admin_alert_val.split(',').map(item => item.trim().toLowerCase());
       if (flagList.includes(answer.toLowerCase()) || q.admin_alert_val.toLowerCase() === 'any') {
         isFlagged = true;
+      }
+    }
+    // GREEN (Safe)
+    if (q.admin_alert_green_val) {
+      let safeList = q.admin_alert_green_val.split(',').map(item => item.trim().toLowerCase());
+      if (safeList.includes(answer.toLowerCase()) || q.admin_alert_green_val.toLowerCase() === 'any') {
+        isSafe = true;
       }
     }
 
@@ -239,10 +264,23 @@ jQuery(function ($) {
     answers.push({
       question: q.question,
       answer: answer,
-      flagged: isFlagged
+      flagged: !!isFlagged,
+      safe: !!isSafe
     });
 
-    $('.wcq-messages').append(`<div class="user">${answer}</div>`);
+    //console.log("Current Saved Data (JSON):", JSON.stringify(answers, null, 2));
+    console.table(answers); // This shows a nice readable grid in the console
+
+    let cssClass = 'user';
+
+    if (isFlagged) {
+      cssClass += ' alert-orange';
+    } else if (isSafe) {
+      cssClass += ' alert-green';
+    }
+
+    $('.wcq-messages').append(`<div class="${cssClass}">${answer}</div>`);
+
     current++;
 
     if (current < questions.length) {
